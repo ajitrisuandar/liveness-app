@@ -13,14 +13,22 @@
 <body class="bg-slate-950 text-white flex flex-col items-center justify-center min-h-screen p-4">
 
     <div class="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl text-center space-y-4">
-        <h2 id="statusText" class="text-sm font-bold text-yellow-400">Memuat Sistem Deteksi Wajah...</h2>
+        <div class="space-y-1">
+            <span id="stepIndicator" class="text-[10px] bg-blue-600/20 text-blue-400 px-2.5 py-0.5 rounded-full font-bold border border-blue-500/30">Langkah 1 dari 2</span>
+            <h2 id="statusText" class="text-sm font-bold text-yellow-400 mt-2">Memuat Sistem Deteksi Wajah...</h2>
+        </div>
         
         <!-- Kotak Tampilan Kamera -->
-        <div class="relative w-full h-80 bg-black rounded-xl overflow-hidden border border-slate-700">
+        <div class="relative w-full h-80 bg-black rounded-xl overflow-hidden border border-slate-700 flex items-center justify-center">
             <video id="webcam" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover transform -scale-x-100"></video>
+            
+            <!-- Panduan Target Lingkaran / Oval Wajah -->
+            <div class="absolute inset-0 border-2 border-dashed border-blue-400/40 rounded-xl m-4 pointer-events-none flex items-center justify-center">
+                <div class="w-36 h-48 border border-blue-400/60 rounded-full"></div>
+            </div>
         </div>
 
-        <p id="instruction" class="text-xs text-slate-300">Posisikan wajah Anda di tengah, lalu <span class="text-emerald-400 font-bold">Kedipkan Mata</span>.</p>
+        <p id="instruction" class="text-xs text-slate-300">Posisikan wajah Anda di dalam kotak panduan.</p>
     </div>
 
     <!-- Hidden canvas untuk menjepret foto -->
@@ -30,33 +38,79 @@
         const videoElement = document.getElementById('webcam');
         const statusText = document.getElementById('statusText');
         const instruction = document.getElementById('instruction');
+        const stepIndicator = document.getElementById('stepIndicator');
+        
         let isCaptured = false;
+        let livenessStep = 0; // 0: Kedip Mata, 1: Senyum
+        let stepLock = false; // Mencegah transisi terlalu cepat
 
         function onResults(results) {
-            if (isCaptured) return;
+            if (isCaptured || stepLock) return;
 
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 const landmarks = results.multiFaceLandmarks[0];
 
-                // Menghitung jarak vertikal kelopak mata kiri (Titik 386 atas, 374 bawah)
+                // 1. Deteksi Kedipan Mata Kiri (Titik 386 atas, 374 bawah)
                 const leftUpper = landmarks[386];
                 const leftLower = landmarks[374];
                 const eyeHeight = Math.abs(leftUpper.y - leftLower.y);
 
-                statusText.innerText = "Wajah Terdeteksi ✅";
-                
-                // Jika tinggi mata mengecil (berkedip), picu pengambilan foto otomatis
-                if (eyeHeight < 0.015) {
-                    isCaptured = true;
-                    statusText.innerText = "Kedipan Dikonfirmasi! Menyimpan...";
-                    statusText.className = "text-sm font-bold text-emerald-400";
-                    
-                    // Jeda sejenak setengah detik agar transisi mulus
-                    setTimeout(captureAndSend, 500);
+                // 2. Deteksi Senyum (Membandingkan lebar bibir [61 & 291] dengan lebar wajah [234 & 454])
+                const leftMouth = landmarks[61];
+                const rightMouth = landmarks[291];
+                const leftCheek = landmarks[234];
+                const rightCheek = landmarks[454];
+
+                const mouthWidth = Math.hypot(rightMouth.x - leftMouth.x, rightMouth.y - leftMouth.y);
+                const faceWidth = Math.hypot(rightCheek.x - leftCheek.x, rightCheek.y - leftCheek.y);
+                const mouthRatio = mouthWidth / faceWidth;
+
+                // --- ALUR 2 TAHAP: KEDIP KEMUDIAN SENYUM ---
+                if (livenessStep === 0) {
+                    stepIndicator.innerText = "Langkah 1 dari 2";
+                    statusText.innerText = "Wajah Terdeteksi ✅";
+                    statusText.className = "text-sm font-bold text-yellow-400";
+                    instruction.innerHTML = "Silakan <span class='text-emerald-400 font-bold'>Kedipkan Mata</span> Anda dengan jelas";
+
+                    // Threshold kedip mata
+                    if (eyeHeight < 0.015) {
+                        lockAndNextStep(1, "Bagus! ✅ Kedipan Dikonfirmasi");
+                    }
+                } 
+                else if (livenessStep === 1) {
+                    stepIndicator.innerText = "Langkah 2 dari 2";
+                    statusText.innerText = "Hebat! Lanjutkan...";
+                    statusText.className = "text-sm font-bold text-blue-400";
+                    instruction.innerHTML = "Sekarang silakan <span class='text-amber-400 font-bold'>Tersenyum 😊</span> ke kamera";
+
+                    // Threshold senyum (lebar mulut bertambah relatif terhadap wajah)
+                    if (mouthRatio > 0.38) {
+                        isCaptured = true;
+                        stepIndicator.innerText = "Selesai 🎉";
+                        statusText.innerText = "Verifikasi Senyum Berhasil! Menyimpan...";
+                        statusText.className = "text-sm font-bold text-emerald-400";
+                        instruction.innerHTML = "Jangan tutup jendela, memproses foto...";
+                        
+                        setTimeout(captureAndSend, 600);
+                    }
                 }
+
             } else {
                 statusText.innerText = "Wajah Tidak Terlihat di Kamera!";
+                statusText.className = "text-sm font-bold text-red-400";
+                instruction.innerText = "Posisikan wajah Anda tepat di depan kamera.";
             }
+        }
+
+        function lockAndNextStep(nextStep, message) {
+            stepLock = true;
+            statusText.innerText = message;
+            statusText.className = "text-sm font-bold text-emerald-400";
+            
+            setTimeout(() => {
+                livenessStep = nextStep;
+                stepLock = false;
+            }, 1000); // Jeda 1 detik agar transisi mulus sebelum lanjut ke tahap senyum
         }
 
         const faceMesh = new FaceMesh({
@@ -83,7 +137,7 @@
         });
 
         camera.start().then(() => {
-            statusText.innerText = "Silakan Kedipkan Mata Anda";
+            statusText.innerText = "Kamera Siap";
         }).catch(err => {
             statusText.innerText = "Gagal Akses Kamera!";
             alert("Pastikan izin akses kamera diaktifkan di browser.");
@@ -109,8 +163,10 @@
                     image: base64Image
                 }, '*');
                 
-                // Tutup popup otomatis
-                window.close();
+                // Tutup popup otomatis setelah 1 detik
+                setTimeout(() => {
+                    window.close();
+                }, 1000);
             } else {
                 alert("Gagal mengirim data ke jendela utama.");
             }
