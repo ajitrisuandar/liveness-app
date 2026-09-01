@@ -3,70 +3,116 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verifikasi Kamera - HRIS</title>
-    <!-- Tailwind CSS untuk desain UI -->
+    <title>Verifikasi Wajah & Liveness - HRIS</title>
+    <!-- Tailwind CSS untuk tampilan -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google MediaPipe Face Mesh CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 </head>
 <body class="bg-slate-950 text-white flex flex-col items-center justify-center min-h-screen p-4">
 
     <div class="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl text-center space-y-4">
-        <h2 id="statusText" class="text-sm font-bold text-yellow-400">Menyiapkan Kamera...</h2>
+        <h2 id="statusText" class="text-sm font-bold text-yellow-400">Memuat Sistem Deteksi Wajah...</h2>
         
         <!-- Kotak Tampilan Kamera -->
         <div class="relative w-full h-80 bg-black rounded-xl overflow-hidden border border-slate-700">
             <video id="webcam" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover transform -scale-x-100"></video>
         </div>
 
-        <p id="instruction" class="text-xs text-slate-400">Posisikan wajah Anda di tengah bingkai.</p>
-        
-        <!-- Tombol tes sementara (Nanti akan otomatis saat fitur kedip dipasang) -->
-        <button id="btnCaptureTest" onclick="captureAndSendPhoto()" class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all cursor-pointer">
-            Ambil Foto & Kirim
-        </button>
+        <p id="instruction" class="text-xs text-slate-300">Posisikan wajah Anda di tengah, lalu <span class="text-emerald-400 font-bold">Kedipkan Mata</span>.</p>
     </div>
+
+    <!-- Hidden canvas untuk menjepret foto -->
+    <canvas id="snapshotCanvas" class="hidden"></canvas>
 
     <script>
         const videoElement = document.getElementById('webcam');
         const statusText = document.getElementById('statusText');
+        const instruction = document.getElementById('instruction');
+        let isCaptured = false;
 
-        // 1. Nyalakan Kamera Depan Perangkat Pengguna
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 640 } } })
-            .then(stream => {
-                videoElement.srcObject = stream;
-                statusText.innerText = "Kamera Siap!";
-            })
-            .catch(err => {
-                console.error("Gagal akses kamera:", err);
-                statusText.innerText = "Gagal Mengakses Kamera!";
-                alert("Pastikan Anda memberikan izin akses kamera pada browser.");
-            });
+        function onResults(results) {
+            if (isCaptured) return;
 
-        // 2. Fungsi Mengambil Foto dan Mengirimkannya ke Aplikasi Utama
-        function captureAndSendPhoto() {
-            const canvas = document.createElement('canvas');
-            canvas.width = videoElement.videoWidth || 640;
-            canvas.height = videoElement.videoHeight || 640;
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                const landmarks = results.multiFaceLandmarks[0];
+
+                // Menghitung jarak vertikal kelopak mata kiri (Titik 386 atas, 374 bawah)
+                const leftUpper = landmarks[386];
+                const leftLower = landmarks[374];
+                const eyeHeight = Math.abs(leftUpper.y - leftLower.y);
+
+                statusText.innerText = "Wajah Terdeteksi ✅";
+                
+                // Jika tinggi mata mengecil (berkedip), picu pengambilan foto otomatis
+                if (eyeHeight < 0.015) {
+                    isCaptured = true;
+                    statusText.innerText = "Kedipan Dikonfirmasi! Menyimpan...";
+                    statusText.className = "text-sm font-bold text-emerald-400";
+                    
+                    // Jeda sejenak setengah detik agar transisi mulus
+                    setTimeout(captureAndSend, 500);
+                }
+            } else {
+                statusText.innerText = "Wajah Tidak Terlihat di Kamera!";
+            }
+        }
+
+        const faceMesh = new FaceMesh({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        });
+
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        faceMesh.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                if (!isCaptured) {
+                    await faceMesh.send({ image: videoElement });
+                }
+            },
+            width: 480,
+            height: 480
+        });
+
+        camera.start().then(() => {
+            statusText.innerText = "Silakan Kedipkan Mata Anda";
+        }).catch(err => {
+            statusText.innerText = "Gagal Akses Kamera!";
+            alert("Pastikan izin akses kamera diaktifkan di browser.");
+        });
+
+        function captureAndSend() {
+            const canvas = document.getElementById('snapshotCanvas');
+            canvas.width = videoElement.videoWidth || 480;
+            canvas.height = videoElement.videoHeight || 480;
             const ctx = canvas.getContext('2d');
             
-            // Efek mirror (dibalik agar tidak terbalik kiri-kanan)
+            // Efek mirror agar posisi foto tidak terbalik
             ctx.translate(canvas.width, 0);
             ctx.scale(-1, 1);
             ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
 
-            // Ubah ke format Base64 (JPEG)
             const base64Image = canvas.toDataURL('image/jpeg', 0.8);
 
-            // Kirim balik pesan ke aplikasi utama (Google Apps Script)
+            // Kirim balik data foto ke aplikasi utama (Google Apps Script)
             if (window.opener) {
                 window.opener.postMessage({
                     type: 'LIVENESS_SUCCESS',
                     image: base64Image
                 }, '*');
                 
-                // Tutup otomatis jendela popup setelah dikirim
+                // Tutup popup otomatis
                 window.close();
             } else {
-                alert("Jendela utama induk tidak ditemukan!");
+                alert("Gagal mengirim data ke jendela utama.");
             }
         }
     </script>
