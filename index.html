@@ -83,8 +83,8 @@
                     statusText.className = "text-sm font-bold text-blue-400";
                     instruction.innerHTML = "Sekarang silakan <span class='text-amber-400 font-bold'>Tersenyum 😊</span> ke kamera";
 
-                    // Threshold senyum (lebar mulut bertambah relatif terhadap wajah)
-                    if (mouthRatio > 0.38) {
+                    // Threshold senyum diturunkan menjadi > 0.32 agar lebih mudah terdeteksi secara natural
+                    if (mouthRatio > 0.32) {
                         isCaptured = true;
                         stepIndicator.innerText = "Selesai 🎉";
                         statusText.innerText = "Verifikasi Senyum Berhasil! Menyimpan...";
@@ -110,7 +110,7 @@
             setTimeout(() => {
                 livenessStep = nextStep;
                 stepLock = false;
-            }, 1000); // Jeda 1 detik agar transisi mulus sebelum lanjut ke tahap senyum
+            }, 1200); // Jeda 1.2 detik agar teks instruksi senyum sempat terbaca oleh user
         }
 
         const faceMesh = new FaceMesh({
