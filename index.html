@@ -43,6 +43,7 @@
         let isCaptured = false;
         let livenessStep = 0; // 0: Kedip Mata, 1: Senyum
         let stepLock = false; // Mencegah transisi terlalu cepat
+        let baseMouthWidth = 0; // Menyimpan ukuran mulut normal (baseline) untuk senyum
 
         function onResults(results) {
             if (isCaptured || stepLock) return;
@@ -55,15 +56,10 @@
                 const leftLower = landmarks[374];
                 const eyeHeight = Math.abs(leftUpper.y - leftLower.y);
 
-                // 2. Deteksi Senyum (Membandingkan lebar bibir [61 & 291] dengan lebar wajah [234 & 454])
+                // 2. Deteksi Senyum (Lebar bibir dari titik sudut mulut 61 & 291)
                 const leftMouth = landmarks[61];
                 const rightMouth = landmarks[291];
-                const leftCheek = landmarks[234];
-                const rightCheek = landmarks[454];
-
                 const mouthWidth = Math.hypot(rightMouth.x - leftMouth.x, rightMouth.y - leftMouth.y);
-                const faceWidth = Math.hypot(rightCheek.x - leftCheek.x, rightCheek.y - leftCheek.y);
-                const mouthRatio = mouthWidth / faceWidth;
 
                 // --- ALUR 2 TAHAP: KEDIP KEMUDIAN SENYUM ---
                 if (livenessStep === 0) {
@@ -83,8 +79,13 @@
                     statusText.className = "text-sm font-bold text-blue-400";
                     instruction.innerHTML = "Sekarang silakan <span class='text-amber-400 font-bold'>Tersenyum 😊</span> ke kamera";
 
-                    // Threshold senyum diturunkan menjadi > 0.32 agar lebih mudah terdeteksi secara natural
-                    if (mouthRatio > 0.32) {
+                    // Set baseline ukuran mulut normal saat pertama kali masuk langkah 1
+                    if (baseMouthWidth === 0) {
+                        baseMouthWidth = mouthWidth;
+                    }
+
+                    // Deteksi senyum: Jika lebar mulut bertambah > 12% dari ukuran normal (baseline)
+                    if (baseMouthWidth > 0 && mouthWidth > baseMouthWidth * 1.12) {
                         isCaptured = true;
                         stepIndicator.innerText = "Selesai 🎉";
                         statusText.innerText = "Verifikasi Senyum Berhasil! Menyimpan...";
@@ -109,8 +110,9 @@
             
             setTimeout(() => {
                 livenessStep = nextStep;
+                baseMouthWidth = 0; // Reset baseline untuk tahap senyum
                 stepLock = false;
-            }, 1200); // Jeda 1.2 detik agar teks instruksi senyum sempat terbaca oleh user
+            }, 1200); // Jeda 1.2 detik agar user siap tersenyum
         }
 
         const faceMesh = new FaceMesh({
