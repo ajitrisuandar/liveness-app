@@ -52,7 +52,9 @@
 
         async function loadModels() {
             try {
-                const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+                // Menggunakan folder 'models' yang ada di dalam repository GitHub Anda sendiri
+                const MODEL_URL = './models'; 
+                
                 await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
                 await faceapi.nets.faceLandmarkNet.loadFromUri(MODEL_URL);
                 await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
@@ -62,7 +64,7 @@
                 startVideo();
             } catch (err) {
                 statusText.innerText = "Gagal memuat AI Model!";
-                console.error(err);
+                console.error("Detail Error:", err);
             }
         }
 
