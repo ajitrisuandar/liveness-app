@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verifikasi & Pencocokan Wajah</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SweetAlert2 untuk Notifikasi -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <!-- Face-API.js -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/face-api.js/0.22.2/face-api.min.js"></script>
+</head>
+<body class="bg-slate-950 text-white flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl text-center space-y-4">
+        <h2 id="statusText" class="text-sm font-bold text-amber-400">Memuat Model AI Wajah...</h2>
+        
+        <div class="relative w-full aspect-[3/4] bg-black rounded-xl overflow-hidden flex items-center justify-center border border-slate-700">
+            <video id="video" autoplay muted playsinline class="absolute inset-0 w-full h-full object-cover"></video>
+            <canvas id="overlay" class="absolute inset-0 w-full h-full"></canvas>
+        </div>
+
+        <div id="instructionBox" class="bg-slate-800 p-3 rounded-xl text-xs text-slate-300">
+            Posisikan wajah di dalam frame, lalu tekan tombol verifikasi.
+        </div>
+
+        <button id="btnCapture" onclick="captureAndVerify()" disabled class="w-full py-3 bg-slate-700 text-slate-400 font-bold text-xs rounded-xl cursor-not-allowed transition-all">
+            Menyiapkan Kamera...
+        </button>
+    </div>
+
+    <canvas id="captureCanvas" class="hidden"></canvas>
+
+    <script>
+        const video = document.getElementById('video');
+        const statusText = document.getElementById('statusText');
+        const btnCapture = document.getElementById('btnCapture');
+        let modelsLoaded = false;
+        let referenceDescriptor = null;
+
+        // Ambil data wajah (Kolom U) dari URL Parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const encodedFaceData = urlParams.get('facedata');
+        
+        if (encodedFaceData) {
+            try {
+                referenceDescriptor = new Float32Array(JSON.parse(decodeURIComponent(encodedFaceData)));
+            } catch (e) {
+                console.error("Gagal parsing data wajah referensi:", e);
+            }
+        }
+
+        async function loadModels() {
+            try {
+                const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+                await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                await faceapi.nets.faceLandmarkNet.loadFromUri(MODEL_URL);
+                await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+                
+                modelsLoaded = true;
+                statusText.innerText = "Kamera Siap. Silakan Verifikasi Wajah.";
+                startVideo();
+            } catch (err) {
+                statusText.innerText = "Gagal memuat AI Model!";
+                console.error(err);
+            }
+        }
+
+        function startVideo() {
+            navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+                .then(stream => {
+                    video.srcObject = stream;
+                    video.onloadedmetadata = () => {
+                        btnCapture.disabled = false;
+                        btnCapture.className = "w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg cursor-pointer";
+                        btnCapture.innerText = "Verifikasi & Cocokkan Wajah";
+                    };
+                })
+                .catch(err => {
+                    statusText.innerText = "Kamera tidak diizinkan / tidak ditemukan!";
+                });
+        }
+
+        async function captureAndVerify() {
+            if (!modelsLoaded) return;
+
+            if (!referenceDescriptor) {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Data Wajah Kosong',
+                    text: 'Data wajah Anda belum terdaftar di sistem (Kolom U kosong). Lakukan registrasi wajah terlebih dahulu!'
+                });
+                return;
+            }
+
+            statusText.innerText = "Menganalisis wajah...";
+            btnCapture.disabled = true;
+
+            // Deteksi wajah & ambil descriptor dari kamera saat ini
+            const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+                                             .withFaceLandmarks()
+                                             .withFaceDescriptor();
+
+            if (!detection) {
+                Swal.fire({ icon: 'warning', title: 'Wajah Tidak Terdeteksi', text: 'Pastikan pencahayaan cukup dan wajah menghadap ke depan.' });
+                statusText.innerText = "Silakan coba lagi.";
+                btnCapture.disabled = false;
+                return;
+            }
+
+            // Hitung Euclidean Distance dengan data dari Kolom U
+            const distance = faceapi.euclideanDistance(detection.descriptor, referenceDescriptor);
+            const THRESHOLD = 0.50; // Batas kemiripan
+
+            if (distance >= THRESHOLD) {
+                Swal.fire({ 
+                    icon: 'error', 
+                    title: 'Wajah Tidak Cocok!', 
+                    text: 'Wajah yang Anda scan tidak sesuai dengan data registrasi di sistem.' 
+                });
+                statusText.innerText = "Verifikasi Gagal.";
+                btnCapture.disabled = false;
+                btnCapture.innerText = "Coba Lagi";
+                return;
+            }
+
+            // Jika cocok, ambil foto ke canvas
+            statusText.innerText = "Wajah Cocok! Menyimpan foto...";
+            const canvas = document.getElementById('captureCanvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            const base64Image = canvas.toDataURL('image/jpeg', 0.85);
+
+            // Kirim balik hasil ke jendela utama aplikasi Apps Script
+            if (window.opener) {
+                window.opener.postMessage({
+                    type: 'LIVENESS_SUCCESS',
+                    image: base64Image
+                }, '*');
+                window.close();
+            } else {
+                alert("Jendela utama tertutup. Silakan kembali manual.");
+            }
+        }
+
+        loadModels();
+    </script>
+</body>
+</html>
